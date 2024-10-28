@@ -40,11 +40,13 @@ enum ENUM_BORDER_STYLE
    BORDER_STYLE_DASH = STYLE_DASH // Dash
   };
 
-enum ENUM_LIT_SESSION_TYPE
+ enum ENUM_LIT_SESSION_TYPE
   {
    LIT_SESSION_LONDON,  // 08 AM to 09 AM [UTC] - Open Inducement Window (1 hour)
    LIT_SESSION_NEWYORK, // 01 PM to 02 PM [UTC] - Open Inducement Window (1 hour)
-   LIT_SESSION_TOKYO    // 23 PM to 06 AM [UTC]
+   LIT_SESSION_TOKYO,   // 23 PM to 06 AM [UTC]
+   LIT_SESSION_FRANKFURT // 07 AM to 08 AM [UTC]
+  
   };
 
 //+------------------------------------------------------------------+
