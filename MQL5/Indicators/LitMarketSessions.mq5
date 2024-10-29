@@ -1,12 +1,13 @@
 //+------------------------------------------------------------------+
-//|                                            LitMarketSessions.mq5 |
-//|                                         Copyright 2024, rpanchyk |
-//|                                      https://github.com/rpanchyk |
+//|                                              market sessions.mq5 |
+//|                                  Copyright 2024, MetaQuotes Ltd. |
+//|                                             https://www.mql5.com |
 //+------------------------------------------------------------------+
-#property copyright "Copyright 2024, rpanchyk"
-#property link      "https://github.com/rpanchyk"
-#property version   "1.00"
-#property description "Indicator shows LIT market sessions"
+#property copyright "Copyright 2024, MetaQuotes Ltd."
+#property link      "https://www.mql5.com"
+#property version   "1.02"
+#property description "Indicator shows market sessions with automatic summer/winter time adjustments"
+
 
 #property indicator_chart_window
 #property indicator_buffers 3
@@ -44,7 +45,9 @@ enum ENUM_LIT_SESSION_TYPE
   {
    LIT_SESSION_LONDON,  // 08 AM to 09 AM [UTC] - Open Inducement Window (1 hour)
    LIT_SESSION_NEWYORK, // 01 PM to 02 PM [UTC] - Open Inducement Window (1 hour)
-   LIT_SESSION_TOKYO    // 23 PM to 06 AM [UTC]
+   LIT_SESSION_TOKYO,   // 23 PM to 06 AM [UTC]
+   LIT_SESSION_FRANKFURT, // 07 AM to 08 AM [UTC] - Open Inducement Window (1 hour)
+   LIT_SESSION_SYDNEY   // 10 PM to 07 AM [UTC]
   };
 
 //+------------------------------------------------------------------+
@@ -91,6 +94,10 @@ public:
             return InpNewyorkColor;
          case  LIT_SESSION_TOKYO:
             return InpTokyoColor;
+         case  LIT_SESSION_FRANKFURT:
+            return InpFrankfurtColor;
+         case  LIT_SESSION_SYDNEY:
+            return InpSydneyColor;
          default:
             Print("Unknown type");
             return -1;
@@ -107,6 +114,10 @@ public:
             return 2;
          case  LIT_SESSION_TOKYO:
             return 3;
+         case  LIT_SESSION_FRANKFURT:
+            return 4;
+         case  LIT_SESSION_SYDNEY:
+            return 5;
          default:
             Print("Unknown type");
             return -1;
@@ -131,10 +142,14 @@ input ENUM_TIME_ZONE InpTimeZoneOffsetHours = TZauto; // Time zone (offset in ho
 input bool InpLondonShow = true; // Show London
 input bool InpNewyorkShow = true; // Show NewYork
 input bool InpTokyoShow = true; // Show Tokyo
+input bool InpFrankfurtShow = true; // Show Frankfurt
+input bool InpSydneyShow = true; // Show Sydney
 input group "Section :: Style";
 input color InpLondonColor = clrLightGreen; // London color
 input color InpNewyorkColor = clrYellow; // NewYork color
 input color InpTokyoColor = clrLightGray; // Tokyo color
+input color InpFrankfurtColor = clrBlue; // Frankfurt color
+input color InpSydneyColor = clrRed; // Sydney color
 input bool InpFill = true; // Fill solid (true) or transparent (false)
 input ENUM_BORDER_STYLE InpBoderStyle = BORDER_STYLE_SOLID; // Border line style
 input int InpBorderWidth = 2; // Border line width
@@ -162,7 +177,7 @@ int OnInit()
    SetIndexBuffer(1, LowBuffer, INDICATOR_CALCULATIONS);
    SetIndexBuffer(2, HighBuffer, INDICATOR_CALCULATIONS);
 
-   timeShiftSec = (InpTimeZoneOffsetHours == TZauto ? getTimeZoneOffsetHours() : InpTimeZoneOffsetHours) * 60 * 60;
+   timeShiftSec = getAutomaticTimeShift();
 
    Print("Initialization finished");
    return INIT_SUCCEEDED;
@@ -204,7 +219,6 @@ int OnCalculate(const int rates_total,
    ArraySetAsSeries(low, true);
 
    int limit = (int) MathMin(rates_total, rates_total - prev_calculated + 1);
-//PrintFormat("RatesTotal: %i, PrevCalculated: %i, Limit: %i", rates_total, prev_calculated, limit);
 
    MqlDateTime currMdt;
    MqlDateTime startMdt;
@@ -217,7 +231,6 @@ int OnCalculate(const int rates_total,
    for(int i = limit - 1; i > 0; i--)
      {
       datetime dt = time[i];
-      //Print(i, " at ", TimeToString(dt), " GMT");
 
       TimeToStruct(dt, currMdt);
       currDt = StructToTime(currMdt);
@@ -271,9 +284,36 @@ int OnCalculate(const int rates_total,
             addBox(&boxes, LIT_SESSION_TOKYO, startDt, endDt, low[i], high[i], i);
            }
         }
+      
+      // Frankfurt
+      if(InpFrankfurtShow)
+        {
+         startMdt.hour = 7;
+         endMdt.hour = 8;
+         startDt = StructToTime(startMdt) + timeShiftSec;
+         endDt = StructToTime(endMdt) + timeShiftSec;
+
+         if(currDt >= startDt && currDt < endDt)
+           {
+            addBox(&boxes, LIT_SESSION_FRANKFURT, startDt, endDt, low[i], high[i], i);
+           }
+        }
+
+      // Sydney
+      if(InpSydneyShow)
+        {
+         startMdt.hour = 22;
+         endMdt.hour = 7;
+         startDt = StructToTime(startMdt) - 86400 + timeShiftSec; // prev day
+         endDt = StructToTime(endMdt) + timeShiftSec;
+
+         if(currDt >= startDt && currDt < endDt)
+           {
+            addBox(&boxes, LIT_SESSION_SYDNEY, startDt, endDt, low[i], high[i], i);
+           }
+        }
      }
 
-//Print("Drawn boxes: ", boxes.Total());
    return rates_total;
   }
 
@@ -290,6 +330,49 @@ int getTimeZoneOffsetHours()
 
    Print("Detected server offset: ", IntegerToString(offsetHours), " hrs");
    return offsetHours;
+  }
+
+//+------------------------------------------------------------------+
+//| Get automatic time shift in seconds                              |
+//+------------------------------------------------------------------+
+int getAutomaticTimeShift()
+  {
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   int month = dt.mon;
+   int day = dt.day;
+   int wday = dt.day_of_week;
+
+   // London DST: Last Sunday of March to Last Sunday of October
+   if(InpLondonShow)
+     {
+      if((month > 3 && month < 10) || (month == 3 && (day - wday) >= 25) || (month == 10 && (day - wday) < 25))
+        return 1 * 3600; // Summer time +1 hour
+     }
+
+   // New York DST: Second Sunday of March to First Sunday of November
+   if(InpNewyorkShow)
+     {
+      if((month > 3 && month < 11) || (month == 3 && day >= (8 - wday)) || (month == 11 && day < (8 - wday)))
+        return 1 * 3600; // Summer time +1 hour
+     }
+
+   // Frankfurt DST: Last Sunday of March to Last Sunday of October
+   if(InpFrankfurtShow)
+     {
+      if((month > 3 && month < 10) || (month == 3 && (day - wday) >= 25) || (month == 10 && (day - wday) < 25))
+        return 1 * 3600; // Summer time +1 hour
+     }
+
+   // Sydney DST: First Sunday of October to First Sunday of April
+   if(InpSydneyShow)
+     {
+      if((month < 4 || month > 10) || (month == 4 && day <= (8 - wday)) || (month == 10 && day >= (8 - wday)))
+        return 1 * 3600; // Summer time +1 hour
+     }
+
+   // Tokyo does not observe DST
+   return 0;
   }
 
 //+------------------------------------------------------------------+
